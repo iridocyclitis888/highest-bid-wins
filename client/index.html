@@ -1,0 +1,86 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Highest Bid Wins</title>
+<style>
+:root{--bg:#0f3d3e;--panel:#145254;--paper:#fff4d6;--red:#e63b2e;--gold:#f4b942;--ink:#1a1a1a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--paper);font:17px/1.35 "Trebuchet MS",system-ui,sans-serif;min-height:100vh;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+#app{max-width:480px;margin:0 auto;padding:18px 16px 32px;display:flex;flex-direction:column;gap:14px}
+h1,h2,.big{font-family:Impact,"Arial Black",sans-serif;font-weight:400;letter-spacing:.5px;margin:0;line-height:1}
+h1{font-size:54px;transform:rotate(-2deg);color:var(--gold);text-shadow:3px 3px 0 var(--red)}h2{font-size:30px}
+.big{font-size:84px;color:var(--gold)}.card{background:var(--panel);border-radius:18px;padding:16px}.c{text-align:center}.sm{opacity:.75;font-size:14px}
+button{font:inherit;font-family:Impact,"Arial Black",sans-serif;font-size:24px;letter-spacing:1px;min-height:60px;border:0;border-radius:16px;background:var(--gold);color:var(--ink);width:100%;box-shadow:0 5px 0 #b57f14;cursor:pointer}
+button:active{transform:translateY(3px);box-shadow:0 2px 0 #b57f14}button:disabled{opacity:.35}button.red{background:var(--red);color:#fff;box-shadow:0 5px 0 #8f1f16}button.ghost{background:transparent;color:var(--paper);box-shadow:none;border:2px solid var(--paper)}
+input{font:inherit;font-size:20px;width:100%;padding:14px;border-radius:12px;border:0;background:var(--paper);color:var(--ink)}
+.code{font:76px Impact,sans-serif;letter-spacing:10px;color:var(--gold);text-align:center}
+.row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #ffffff22}.row:last-child{border:0}.out{opacity:.45;text-decoration:line-through}
+.err{background:var(--red);padding:10px 14px;border-radius:12px;font-weight:bold}.pop{animation:pop .35s}.sold{animation:slam .5s}
+@keyframes pop{from{transform:scale(.7);opacity:0}}@keyframes slam{from{transform:scale(2.4) rotate(-8deg);opacity:0}}
+.you{color:var(--gold);font-family:Impact,sans-serif;font-size:28px}.bar{position:fixed;top:8px;right:10px;font-size:22px;background:none;box-shadow:none;width:auto;min-height:0;padding:4px 8px;color:var(--paper)}
+.cf{position:fixed;top:-20px;width:10px;height:14px;animation:fall 2.6s linear forwards;z-index:9}@keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+
+body{background:var(--bg) repeating-conic-gradient(from 0deg at 50% 18%,#145254 0 7deg,#0f3d3e 7deg 14deg) fixed}
+.sign{background:var(--red);border:9px dotted #ffe08a;border-radius:22px;padding:14px 10px 18px;text-align:center;box-shadow:0 8px 0 #8f1f16,0 0 28px #f4b94266}
+.sign h1{transform:none;text-shadow:3px 3px 0 #8f1f16;color:#ffe08a}
+.gav{display:block;margin:0 auto;width:120px;height:auto;transform-origin:20% 90%;animation:tap 2.4s ease-in-out infinite}
+@keyframes tap{0%,70%,100%{transform:rotate(-12deg)}80%{transform:rotate(22deg)}}
+.coins{display:flex;justify-content:center;gap:6px;font-size:30px}
+.card{border:2px solid #f4b94255;box-shadow:0 6px 0 #0a2c2d}
+.ticket{background:var(--paper);color:var(--ink);text-align:center;padding:18px;border-radius:10px;border:3px dashed var(--red);position:relative;box-shadow:0 8px 0 #0a2c2d}
+.ticket:before,.ticket:after{content:"";position:absolute;top:50%;width:26px;height:26px;margin-top:-13px;border-radius:50%;background:#0f3d3e}
+.ticket:before{left:-16px}.ticket:after{right:-16px}.ticket h2{color:var(--red)}
+.coin{width:150px;height:150px;border-radius:50%;margin:6px auto;display:flex;align-items:center;justify-content:center;font:68px Impact,sans-serif;color:#7a4a00;background:radial-gradient(circle at 35% 30%,#ffe9a0,#f4b942 60%,#c88a14);border:8px solid #e0a02a;box-shadow:inset 0 0 0 5px #fff4d655,0 6px 0 #8a5d0a;animation:pop .3s}
+.stamp{font:80px Impact,sans-serif;color:var(--red);border:8px solid var(--red);border-radius:14px;display:inline-block;padding:0 18px;margin:12px 0;transform:rotate(-7deg);background:#fff4d6;animation:slam .45s}
+.row b,.you{color:var(--gold)}
+</style></head><body><button class="bar" id="mute" aria-label="Mute">🔊</button><div id="app"></div>
+<script src="/socket.io/socket.io.js"></script><script>
+const GAV=`<svg class=gav viewBox="0 0 120 100" aria-hidden=true><rect x="8" y="86" width="104" height="9" rx="4" fill="#8a5d0a"/><g transform="rotate(-30 60 40)"><rect x="52" y="30" width="16" height="62" rx="6" fill="#c9833a"/><rect x="22" y="8" width="76" height="30" rx="9" fill="#f4b942" stroke="#8a5d0a" stroke-width="4"/><rect x="34" y="8" width="8" height="30" fill="#8a5d0a"/><rect x="78" y="8" width="8" height="30" fill="#8a5d0a"/></g></svg>`;
+const API=window.SERVER_URL||undefined, io_=typeof io=='undefined'?{emit(){},on(){}}:io(API), $=document.getElementById('app'), S={};let st=null,msg='',drafts={cat:'',items:'',name:'',code:''},mode='home',muted=false,last={};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ac;function beep(f,d=.12){if(muted)return;try{ac=ac||new AudioContext();const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=.08;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d)}catch{}}
+document.getElementById('mute').onclick=e=>{muted=!muted;e.target.textContent=muted?'🔇':'🔊'};
+const emit=(ev,d)=>io_.emit(ev,d,r=>{if(r&&r.error){msg=r.error;render()}else msg=''});
+const enter=(ev,d)=>io_.emit(ev,d,r=>{if(r.error){if(ev=='reconnect_player'){sessionStorage.removeItem('s');msg=''}else msg=r.error;render()}else{sessionStorage.s=JSON.stringify({code:r.code,token:r.token});msg=''}});
+if(typeof io=='undefined'){msg=location.protocol=='file:'?'This page must be opened through the game server (npm start), not as a file.':'Game server not reachable.'}
+io_.on('connect_error',()=>{msg='Can\'t reach the game server. Check your connection and retry.';if(!st)render()});
+io_.on('connect',()=>{if(msg.startsWith('Can'))msg='';const s=sessionStorage.s&&JSON.parse(sessionStorage.s);if(s)enter('reconnect_player',s)});
+io_.on('state',s=>{ // sound cues from transitions
+ if(st){if(s.phase=='AUCTION'&&s.item!=st.item)beep(520);else if(s.bid>st.bid)beep(660,.08);else if(s.sold&&!st.sold)beep(300,.3);else if(s.phase=='WINNER'&&st.phase!='WINNER'){beep(880,.3);confetti()}}
+ st=s;st._end=s.turnMs!=null?Date.now()+s.turnMs:null;render()});
+setInterval(()=>{const el=document.getElementById('tm');if(!el||!st||st._end==null)return;const t=Math.max(0,Math.ceil((st._end-Date.now())/1000));el.textContent=`${nm(st.turn)}: ${t}s left`;el.style.color=t<=10?'#ff8a7a':''},400);
+function confetti(){for(let i=0;i<60;i++){const d=document.createElement('i');d.className='cf';d.style.left=Math.random()*100+'vw';d.style.background=['#f4b942','#e63b2e','#fff4d6'][i%3];d.style.animationDelay=Math.random()*.8+'s';document.body.append(d);setTimeout(()=>d.remove(),3600)}}
+const nm=id=>st.players.find(p=>p.id==id)?.name||'';
+const list=(f)=>st.players.map(f).join('');
+function render(){const e=msg?`<div class="err">${esc(msg)}</div>`:'';
+ if(!st){$.innerHTML=mode=='home'?`${GAV}<div class=sign><h1>HIGHEST BID WINS</h1></div><div class=coins>🪙🪙🪙</div><p class="c">Bid smart. Spend wisely. Hope you guessed right.</p><p class="sm c">Everyone gets $20. One player secretly chooses the items. Bid against your friends without knowing what's coming next.</p>${e}<input id=n autocomplete=off placeholder="Your name" maxlength=14 value="${esc(drafts.name)}"><button id=cr>CREATE GAME</button><button class=ghost id=jn>JOIN GAME</button>`
+ :`<h2>Join a game</h2>${e}<input id=cd autocomplete=off placeholder="Room code" maxlength=4 autocapitalize=characters value="${esc(drafts.code)}"><input id=n autocomplete=off placeholder="Your name" maxlength=14 value="${esc(drafts.name)}"><button id=go>JOIN GAME</button><button class=ghost id=bk>BACK</button>`;
+  const v=id=>document.getElementById(id),nameV=()=>v('n').value.trim();
+  if(v('cr'))v('cr').onclick=()=>enter('create_room',{name:nameV()});if(v('jn'))v('jn').onclick=()=>{drafts.name=v('n').value;mode='join';render()};
+  if(v('go'))v('go').onclick=()=>{drafts.name=nameV();enter('join_room',{code:v('cd').value,name:drafts.name})};if(v('bk'))v('bk').onclick=()=>{mode='home';render()};return}
+ const me=st.me,isA=me.id==st.auctioneer,h=`<div class="sm c">Room ${st.code}</div>`;let b='';
+ const money=`<div class="card c"><div class="sm">AVAILABLE</div><div class="you">💰 $${me.balance}</div></div>`;
+ const roster=`<div class="card">${list(p=>`<div class="row ${p.passed?'out':''}"><span>${p.connected?'🟢':'⚪'} ${esc(p.name)}${p.host?' (host)':''}${p.id==st.auctioneer&&st.phase!='LOBBY'?' 🎤':''}${p.id==st.high&&st.phase=='AUCTION'?' 🔨':''}</span><span>${p.passed?'PASSED':st.phase=='LOBBY'?'':'$'+p.balance}</span></div>`)}</div>`;
+ if(st.phase=='LOBBY'){b=`<div class="code pop">${st.code}</div><button class=ghost id=cp>COPY CODE</button>${roster}<div class="sm c">${st.players.length} / 10 players</div>${me.host?`<button id=st ${st.players.length<3?'disabled':''}>START GAME</button>`:'<p class=c>Waiting for the host to start…</p>'}<button class=ghost id=lv>LEAVE</button>`}
+ else if(st.phase=='SETUP'){b=isA?`<h2>YOU'RE THE AUCTIONEER</h2><p>Round ${st.round} of ${st.rounds}. Pick a category, then enter exactly <b>${st.need}</b> items (one per line).</p>${e}<input id=ct placeholder="Category (e.g. Fast food)" maxlength=40 value="${esc(drafts.cat)}"><textarea id=it rows=9 style="font:inherit;font-size:18px;width:100%;padding:12px;border-radius:12px" placeholder="One item per line">${esc(drafts.items)}</textarea><div class=sm id=cnt></div><button id=sub>SUBMIT ITEMS</button>`:`<h2>ROUND ${st.round} OF ${st.rounds}</h2><p class=c>🎤 ${esc(nm(st.auctioneer))} is choosing a category and items…${st.players.find(p=>p.id==st.auctioneer).connected?'':'<br>They disconnected. Waiting for them to return.'}</p>${money}`}
+ else if(st.phase=='AUCTION'){const mine=st.turn==me.id&&!isA;const bidder=!isA&&!st.players.find(p=>p.id==me.id).passed;
+  b=`<div class="c sm">${esc(st.category)} · item ${st.itemNo} of ${st.total}</div><div class="ticket pop"><div class="sm">LOT ${st.itemNo} OF ${st.total}</div><h2 style="font-size:40px;margin:8px 0">${esc(st.item)}</h2></div><div class="c"><div class="sm">CURRENT BID</div><div class="coin" aria-label="Current bid">$${st.bid}</div><div>High bidder: <b>${esc(nm(st.high))}</b></div><div class="sm" id=tm></div></div>${isA?`<p class=c>🎤 You're the Auctioneer. Next up: ${esc((st.upcoming||[]).slice(0,3).join(', '))||'—'}…</p>`:`${money}${mine?`<div class="you c">YOUR TURN</div><button id=bd ${me.balance<st.bid+1-me.commit?'disabled':''}>BID +$1</button><button class=red id=ps ${st.high==me.id?'disabled':''}>PASS</button>`:`<p class=c>${bidder?'Waiting for '+esc(nm(st.turn))+'…':'You passed this item.'}</p>`}`}${e}${roster}`}
+ else if(st.phase=='SOLD'){const s=st.sold;b=s.free?`<div class="sold c"><div class="stamp">FREE!</div><h2>${esc(s.winner)} gets ${esc(s.item)}</h2><p class=sm>Nobody has money left, so items are handed out one by one.</p></div>${money}`:s.none?`<h2 class=c>NO BIDDERS</h2><p class=c>${esc(s.item)} goes unsold.</p>`:`<div class="sold c">${GAV}<div class="stamp">SOLD!</div><h2>${esc(s.winner)} wins</h2><p>${esc(s.item)} for <b>$${s.price}</b></p></div>${money}`}
+ else if(st.phase=='ROUND_DONE'){b=`<h2 class=c>ROUND COMPLETE</h2><p class=c>Time to vote!</p><p class=c>${esc(nm(st.auctioneer))} was the Auctioneer.</p>${money}`}
+ else if(st.phase=='RESULTS'||st.phase=='ROUND_WIN'||st.phase=='WINNER'){const v=st.phase=='RESULTS',rw=st.phase=='ROUND_WIN',fin=st.phase=='WINNER';
+  const sb=`<div class=card><div class=sm>SCOREBOARD</div>${[...st.players].sort((a,b)=>b.points-a.points).map(p=>`<div class=row><span>${esc(p.name)}</span><b>${p.points} pt${p.points==1?'':'s'}</b></div>`).join('')}</div>`;
+  const lines=a=>a.map(x=>`<div class=row><span>${esc(x.item)}</span><b>${x.price?'$'+x.price:'FREE'}</b></div>`).join('');
+  const body=p=>{if(!p.purchases.length)return '<div class=sm>Bought nothing.</div>';if(!fin)return lines(p.purchases);const g={};p.purchases.forEach(x=>(g[x.round]=g[x.round]||{c:x.category,a:[]}).a.push(x));return Object.values(g).map(o=>`<div style="margin-top:10px;color:var(--gold);font-family:Impact,sans-serif;font-size:20px">${esc(o.c)}</div>`+lines(o.a)).join('')};
+  const buys=st.players.filter(p=>p.purchases).map(p=>`<div class=card><h2>${esc(p.name)}</h2>${body(p)}</div>`).join('');
+  if(v){const opts=st.cands,left=st.players.filter(p=>p.connected&&!st.voted.includes(p.id)).length;
+   b=`<h2 class=c>ROUND ${st.round}: WHO WON?</h2><p class="c sm">${esc(st.category)}</p>${st.tie?'<h2 class=c style="color:var(--gold)">IT\'S A TIE! Vote again.</h2>':''}${buys}${st.myVote?`<p class=c>Vote submitted! Waiting for ${left} more…</p>`:isA||opts.length?`${e}<h2 class=c>VOTE FOR THE BEST HAUL</h2>`+opts.map(id=>`<button data-v="${id}">${esc(nm(id))}</button>`).join(''):''}`}
+  else if(rw){b=`<div class="c pop"><div style="font-size:84px">🏆</div><div class=sm>${st.coin?'Tied again. Picked at random:':'ROUND WINNER  +1 POINT'}</div><div class=big>${esc(st.winner)}</div></div><div class=card>${Object.entries(st.tally).map(([n,x])=>`<div class=row><span>${esc(n)}</span><b>${x} vote${x==1?'':'s'}</b></div>`).join('')}</div>${sb}<p class="c sm">Next round starting…</p>`}
+  else{b=`<div class="c pop"><div style="font-size:84px">🏆</div><div class=sm>THE AUCTIONS ARE OVER! ${st.winner.includes('&')?'IT\'S A TIE FOR FIRST':'CHAMPION'}</div><div class=big style="font-size:60px">${esc(st.winner)}</div></div>${sb}${buys}<button id=pa>BACK TO LOBBY</button><button class=ghost id=mm>MAIN MENU</button>`}}
+ $.innerHTML=(st.phase!='AUCTION'&&st.phase!='LOBBY'?h:st.phase=='LOBBY'?'<div class=sign><h1 style="font-size:30px">HIGHEST BID WINS</h1></div>':h)+b+(st.phase=='LOBBY'?e:'');
+ const g=id=>document.getElementById(id);
+ if(g('cp'))g('cp').onclick=()=>navigator.clipboard?.writeText(st.code);if(g('st'))g('st').onclick=()=>emit('start_game');
+ if(g('lv'))g('lv').onclick=()=>{emit('leave_room');sessionStorage.removeItem('s');st=null;mode='home';render()};
+ if(g('bd'))g('bd').onclick=()=>emit('bid');if(g('ps'))g('ps').onclick=()=>emit('pass');if(g('pa'))g('pa').onclick=()=>emit('play_again');if(g('mm'))g('mm').onclick=()=>{sessionStorage.removeItem('s');location.reload()};
+ $.querySelectorAll('[data-v]').forEach(x=>x.onclick=()=>emit('submit_vote',{target:x.dataset.v}));
+ if(g('sub')){const c=g('ct'),t=g('it'),cnt=g('cnt'),upd=()=>{let L=t.value.split('\n').slice(0,st.need).map(x=>x.slice(0,30));if(L.join('\n')!=t.value)t.value=L.join('\n');drafts.cat=c.value;drafts.items=t.value;const n=L.filter(x=>x.trim()).length;cnt.textContent=`${n} of ${st.need} items`+(n==st.need?' ✓':'');g('sub').disabled=n!=st.need};c.oninput=t.oninput=upd;upd();
+  g('sub').onclick=()=>emit('submit_items',{category:c.value,items:t.value.split('\n')})}}
+render();
+</script></body></html>

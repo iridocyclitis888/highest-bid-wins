@@ -7,7 +7,7 @@ import * as G from './game.js';
 
 const app = express();
 const srv = http.createServer(app);
-const io = new Server(srv, { cors: { origin: process.env.CLIENT_ORIGIN || '*' } });
+const io = new Server(srv, { cors: { origin: process.env.CLIENT_ORIGIN || '*' }, pingInterval: 10000, pingTimeout: 8000 });
 app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), '../client')));
 
 const push = r => r.players.forEach(p => p.sid && io.to(p.sid).emit('state', G.view(r, p)));
@@ -29,12 +29,13 @@ io.on('connection', s => {
   });
   act('start_game', (r, p) => G.start(r, p));
   act('submit_items', (r, p, d) => G.submitItems(r, p, d.category, d.items));
-  act('bid', (r, p) => G.bid(r, p));
+  act('bid', (r, p, d) => G.bid(r, p, d.inc));
   act('pass', (r, p) => G.pass(r, p));
   act('submit_vote', (r, p, d) => G.vote(r, p, d.target));
+  act('kick_player', (r, p, d) => { const sid = r.players.find(x => x.id === d.target)?.sid; const res = G.kick(r, p, d.target); if (res?.error) return res; if (sid) io.to(sid).emit('kicked'); });
   act('play_again', (r, p) => G.playAgain(r, p));
   act('leave_room', (r, p) => { G.leave(r, p); s.leave(r.code); s.data = {}; });
-  s.on('disconnect', () => { const c = ctx(s); if (c) { G.disconnect(c.r, c.p); push(c.r); } });
+  s.on('disconnect', () => { const c = ctx(s); if (c && c.p.sid === s.id) { G.disconnect(c.r, c.p); push(c.r); } }); // ignore stale sockets
 });
 const port = process.env.PORT || 3000;
 srv.listen(port, () => console.log(`Highest Bid Wins on http://localhost:${port}`));

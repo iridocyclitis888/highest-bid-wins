@@ -20,15 +20,19 @@ export function joinRoom(code, name) {
   const r = rooms.get((code || '').toUpperCase().trim());
   name = (name || '').trim().slice(0, 14);
   if (!r) return err('Room not found.');
-  if (r.phase !== 'LOBBY') return err('Game already in progress.');
   if (!name) return err('Enter your name.');
+  const old = r.players.find(p => p.name.toLowerCase() === name.toLowerCase());
+  if (old) { // same name as a disconnected player = rejoin as them
+    if (old.connected) return err("That name is taken (or you're still connected). If it's you, wait a few seconds and try again.");
+    old.token = rid(); old.connected = true; clearTimeout(old.dc); arm(r); return { r, p: old };
+  }
+  if (r.phase !== 'LOBBY') return err('Game already in progress. To rejoin, use the exact name you played with.');
   if (r.players.length >= 10) return err('Room is full (10 max).');
-  if (r.players.some(p => p.name.toLowerCase() === name.toLowerCase())) return err('That name is taken.');
   return { r, ...addPlayer(r, name, false) };
 }
 export function resume(code, token) {
   const r = rooms.get(code); const p = r && r.players.find(p => p.token === token);
-  if (!p) return err('Session expired.'); p.connected = true; arm(r); return { r, p };
+  if (!p) return err('Session expired.'); p.connected = true; clearTimeout(p.dc); arm(r); return { r, p };
 }
 export function leave(r, p) {
   if (r.phase !== 'LOBBY') return;
@@ -36,19 +40,26 @@ export function leave(r, p) {
   if (!r.players.length) return rooms.delete(r.code);
   if (p.host) r.players[0].host = true;
 }
-export function disconnect(r, p) { p.connected = false; if (r.phase === 'LOBBY') leave(r, p); else { arm(r); tallyIfDone(r); } }
+export function disconnect(r, p) {
+  p.connected = false;
+  if (r.phase === 'LOBBY') { // grace period so a refresh or blip doesn't kick you out of the lobby
+    clearTimeout(p.dc);
+    p.dc = setTimeout(() => { if (!p.connected && r.players.includes(p)) { leave(r, p); r.push(r); } }, 60000);
+  } else { arm(r); tallyIfDone(r); }
+}
 
 export function start(r, p) {
   if (!p.host || r.phase !== 'LOBBY') return err('Only the host can start.');
   r.players = r.players.filter(x => x.connected);
   if (r.players.length < 3) return err('Need at least 3 players.');
-  r.order = shuffle(r.players.map(x => x.id)); r.round = 0; r.startCtr = 0; r.votes = {}; r.voteRound = 1; r.tally = null; r.winner = null;
-  r.players.forEach(x => Object.assign(x, { balance: 20, commit: 0, purchases: [], points: 0 }));
+  r.budget = 20 + 10 * (r.players.length - 3); // $20 for 3 players, +$10 per extra player
+  r.order = shuffle(r.players.map(x => x.id)); r.round = 0; r.lastStarter = null; r.votes = {}; r.voteRound = 1; r.tally = null; r.winner = null;
+  r.players.forEach(x => Object.assign(x, { balance: r.budget, commit: 0, purchases: [], points: 0 }));
   beginRound(r);
 }
 function beginRound(r) {
-  r.players.forEach(x => { x.balance = 20; x.commit = 0; }); // fresh $20 every round
-  r.auctioneer = r.order[r.round]; r.bidders = r.players.map(x => x.id).filter(id => id !== r.auctioneer);
+  r.players.forEach(x => { x.balance = r.budget; x.commit = 0; }); // fresh budget every round
+  r.auctioneer = r.order[r.round]; r.bidders = r.order.filter(id => id !== r.auctioneer); // one random seating order for the whole game
   r.category = ''; r.items = []; r.itemNo = 0; r.phase = 'SETUP'; r.cur = null; r.sold = null;
 }
 export function submitItems(r, p, category, items) {
@@ -58,18 +69,22 @@ export function submitItems(r, p, category, items) {
   items = (Array.isArray(items) ? items : []).map(s => String(s).trim().slice(0, 30)).filter(Boolean);
   if (!category) return err('Enter a category.');
   if (items.length !== need) return err(`Enter exactly ${need} items.`);
+  const seen = new Set();
+  for (const it of items) { const k = it.toLowerCase().replace(/\s+/g, ' '); if (seen.has(k)) return err(`"${it}" is entered twice. Every item must be different.`); seen.add(k); }
   r.category = category; r.items = shuffle(items); r.total = need; nextItem(r);
 }
 function nextItem(r) {
   if (r.itemNo >= r.total) { r.phase = 'ROUND_DONE'; r.sold = null; return later(r, 3000, afterRound); }
   r.cur = r.items[r.itemNo++]; r.sold = null; r.phase = 'AUCTION';
-  const b = bidders(r), n = b.length; let s = null;
-  for (let k = 0; k < n; k++) { const c = b[(r.startCtr + k) % n]; if (c.connected && c.balance >= 1) { s = c; break; } }
-  r.startCtr++;
-  if (!s) { // nobody can afford anything: hand the item to a bidder for free, rotating one by one
-    const g = b[(r.startCtr - 1) % n]; g.purchases.push({ item: r.cur, price: 0, category: r.category, round: r.round });
+  const b = bidders(r), ord = r.order, L = ord.length, from = ord.indexOf(r.lastStarter) + 1; let s = null; // -1 + 1 = seat 0 on the first item
+  const seat = k => P(r, ord[(from + k) % L]);
+  for (let k = 0; k < L && !s; k++) { const c = seat(k); if (r.bidders.includes(c.id) && c.connected && c.balance >= 1) s = c; }
+  if (!s) { // nobody can afford anything: hand the item to the next bidder in seating order for free
+    let g = null; for (let k = 0; k < L && !g; k++) { const c = seat(k); if (r.bidders.includes(c.id)) g = c; }
+    r.lastStarter = g.id; g.purchases.push({ item: r.cur, price: 0, category: r.category, round: r.round });
     r.phase = 'SOLD'; r.sold = { free: true, winner: g.name, item: r.cur, price: 0 }; return later(r, 2500, () => nextItem(r));
   }
+  r.lastStarter = s.id; // the opener carries across rounds, so starts stay evenly spread
   r.active = new Set(b.map(x => x.id)); r.bid = 1; r.high = s.id; s.balance--; s.commit++; r.turn = s.id; advance(r);
 }
 function advance(r) { // move to next active bidder; auto-pass anyone who cannot afford a bid
@@ -85,9 +100,10 @@ function advance(r) { // move to next active bidder; auto-pass anyone who cannot
   arm(r);
 }
 function refund(r, p) { p.balance += p.commit; p.commit = 0; r.active.delete(p.id); }
-export function bid(r, p) {
+export function bid(r, p, inc = 1) {
+  inc = Number(inc); if (!Number.isInteger(inc) || inc < 1 || inc > 500) return err('Invalid bid.');
   if (r.phase !== 'AUCTION' || r.turn !== p.id || !r.active.has(p.id)) return err('Not your turn.');
-  const cost = r.bid + 1; // only the high bidder has money held, so a new bid pays the full new price
+  const cost = r.bid + inc; // only the high bidder has money held, so a new bid pays the full new price
   if (p.balance < cost) return err('Not enough money.');
   const prev = P(r, r.high); prev.balance += prev.commit; prev.commit = 0; // outbid player is refunded immediately
   p.balance -= cost; p.commit = cost; r.bid = cost; r.high = p.id; advance(r);
@@ -97,8 +113,8 @@ export function pass(r, p) {
   if (p.id === r.high) return err('You hold the high bid.');
   refund(r, p); advance(r);
 }
-function sell(r) {
-  clearTimeout(r.timers.arm);
+function sell(r) { clearTimeout(r.timers.arm); r.turnEnds = null; finalize(r); }
+function finalize(r) {
   const w = P(r, [...r.active][0]); w.commit = 0; w.purchases.push({ item: r.cur, price: r.bid, category: r.category, round: r.round });
   r.sold = { winner: w.name, item: r.cur, price: r.bid }; r.phase = 'SOLD'; r.active = new Set();
   later(r, 2800, () => nextItem(r));
@@ -108,11 +124,47 @@ function afterRound(r) { // each round ends with a vote among that round's bidde
 }
 function nextRound(r) {
   r.round++; r.tie = false; r.coin = false;
-  if (r.round >= r.order.length) { // everyone has been Auctioneer: most points wins
-    const m = Math.max(...r.players.map(x => x.points)), ws = r.players.filter(x => x.points === m);
-    r.winner = ws.map(x => x.name).join(' & '); r.tally = Object.fromEntries(r.players.map(x => [x.name, x.points])); r.phase = 'WINNER'; return;
-  }
+  if (r.round >= r.order.length) return endGame(r); // everyone has been Auctioneer: most points wins
   beginRound(r);
+}
+function awards(r) { // fun consolation prizes
+  const rows = r.players.map(p => ({ n: p.name, spent: p.purchases.reduce((a, x) => a + x.price, 0), count: p.purchases.length }));
+  const pick = (key, fn) => { const val = fn(...rows.map(x => x[key])); return { val, names: rows.filter(x => x[key] === val).map(x => x.n) }; };
+  return { rich: pick('spent', Math.max), hoarder: pick('count', Math.max), cheap: pick('spent', Math.min) };
+}
+function endGame(r) {
+  clearTimeout(r.timers.later); clearTimeout(r.timers.arm); r.turnEnds = null;
+  const m = Math.max(...r.players.map(x => x.points)), ws = r.players.filter(x => x.points === m);
+  r.winner = ws.map(x => x.name).join(' & '); r.tally = Object.fromEntries(r.players.map(x => [x.name, x.points]));
+  r.awards = awards(r); r.phase = 'WINNER';
+}
+function cancelItem(r) { // stop the current item; the high bidder gets their money back
+  clearTimeout(r.timers.arm); clearTimeout(r.timers.later); r.turnEnds = null;
+  const h = P(r, r.high); if (h) { h.balance += h.commit; h.commit = 0; } r.active = new Set();
+}
+function dropFromGame(r, t) { // keeps the round/auctioneer bookkeeping consistent after a player is removed mid-game
+  const idx = r.order.indexOf(t.id), wasAuc = r.auctioneer === t.id, ph = r.phase;
+  r.order = r.order.filter(id => id !== t.id);
+  if (r.bidders) r.bidders = r.bidders.filter(id => id !== t.id);
+  if (r.cands) r.cands = r.cands.filter(id => id !== t.id);
+  if (r.votes) for (const k of Object.keys(r.votes)) if (k === t.id || r.votes[k] === t.id) delete r.votes[k];
+  if (idx !== -1 && idx < r.round) r.round--; // an earlier Auctioneer left: shift the pointer
+  if (ph === 'WINNER') return;
+  if (r.players.length < 3) return endGame(r);
+  if (wasAuc) {
+    if (ph === 'SETUP') return r.round >= r.order.length ? endGame(r) : beginRound(r); // their round is skipped
+    if (['AUCTION', 'SOLD', 'ROUND_DONE'].includes(ph)) { cancelItem(r); r.round--; return afterRound(r); } // end the round early and vote
+    r.round--; // round already over: the next round counter should land on the next Auctioneer
+  } else if (ph === 'AUCTION') {
+    cancelItem(r); r.sold = { none: true, item: r.cur }; r.phase = 'SOLD'; later(r, 2500, () => nextItem(r));
+  }
+  if (r.phase === 'RESULTS') { if (!r.cands.length) { clearTimeout(r.timers.later); return nextRound(r); } tallyIfDone(r); }
+}
+export function kick(r, host, id) {
+  if (!host.host) return err('Only the host can remove players.');
+  const t = P(r, id); if (!t || t === host) return err("Can't remove that player.");
+  clearTimeout(t.dc); r.players = r.players.filter(x => x !== t);
+  if (r.phase !== 'LOBBY') dropFromGame(r, t);
 }
 function later(r, ms, fn) { clearTimeout(r.timers.later); r.timers.later = setTimeout(() => { fn(r); r.push(r); }, ms); }
 // Turn timer: the player on turn is auto-passed after 30s (15s if disconnected). Never the high bidder, who never holds the turn.
@@ -153,17 +205,17 @@ export function playAgain(r, p) {
 // Per-player view: future items are never included.
 export function view(r, me) {
   const rv = r.phase === 'RESULTS' || r.phase === 'ROUND_WIN', fin = r.phase === 'WINNER';
-  const inAuc = r.phase === 'AUCTION';
+  const inAuc = r.phase === 'AUCTION' || r.phase === 'GOING';
   return {
     code: r.code, phase: r.phase, round: (r.round ?? 0) + 1, rounds: r.players.length,
     me: { id: me.id, host: me.host, balance: me.balance, commit: me.commit },
     players: r.players.map(p => ({ id: p.id, name: p.name, host: p.host, connected: p.connected, balance: p.balance, points: p.points,
       passed: inAuc && r.bidders.includes(p.id) && !r.active.has(p.id), purchases: fin ? p.purchases : rv && r.bidders.includes(p.id) ? p.purchases.filter(x => x.round === r.round) : undefined })),
     auctioneer: r.auctioneer, category: r.category, need: r.bidders ? 3 * r.bidders.length : 0,
-    item: ['AUCTION'].includes(r.phase) ? r.cur : null, itemNo: r.itemNo, total: r.total,
-    turnMs: inAuc && r.turnEnds ? Math.max(0, r.turnEnds - Date.now()) : null, bid: r.bid, high: r.high, turn: inAuc ? r.turn : null, sold: r.sold,
+    item: ['AUCTION', 'GOING'].includes(r.phase) ? r.cur : null, going: r.phase === 'GOING' ? r.going : 0, itemNo: r.itemNo, total: r.total,
+    turnMs: inAuc && r.turnEnds ? Math.max(0, r.turnEnds - Date.now()) : null, bid: r.bid, high: r.high, turn: r.phase === 'AUCTION' ? r.turn : null, sold: r.sold,
     upcoming: me.id === r.auctioneer && r.items ? r.items.slice(r.itemNo) : undefined,
     cands: r.phase === 'RESULTS' ? r.cands : undefined, voted: r.phase === 'RESULTS' ? Object.keys(r.votes) : undefined, myVote: r.votes?.[me.id],
-    tie: r.tie, tally: fin ? r.tally : r.phase === 'ROUND_WIN' ? r.roundTally : null, winner: r.phase === 'ROUND_WIN' ? r.roundWinner : r.winner, coin: r.coin,
+    tie: r.tie, awards: fin ? r.awards : null, tally: fin ? r.tally : r.phase === 'ROUND_WIN' ? r.roundTally : null, winner: r.phase === 'ROUND_WIN' ? r.roundWinner : r.winner, coin: r.coin,
   };
 }

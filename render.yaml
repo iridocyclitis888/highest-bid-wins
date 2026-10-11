@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: highest-bid-wins
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
